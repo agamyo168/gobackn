@@ -16,6 +16,8 @@
 #include <string.h>
 #include <iostream>
 #include <arpa/inet.h>
+#include <thread>
+#include <chrono>
 
 using namespace std;
 // Global Variables
@@ -148,9 +150,9 @@ int main()
 
 
     frame r;
-    int count = 25;
+
     
-    while(count){
+    while(true){
         wait_for_event(&event);
         switch(event)
         {
@@ -184,7 +186,6 @@ int main()
             disable_network_layer();
         else
             enable_network_layer();
-    count--;
     }
     return 0;
 }

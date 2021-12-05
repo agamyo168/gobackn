@@ -16,29 +16,40 @@
 #include <string.h>
 #include <iostream>
 #include <arpa/inet.h>
-
+#include <thread>
+#include <chrono>
+#include <atomic>
 #define ADDRESS "127.0.0.1"
 #define PORT 1234
 #define MAX_SEQ 4
 using namespace std;
 
 // Global Variables
+
 packet networkLayerBuffer[8]={
-    {'H','e','l','l','o',' ',' ',' '},
-    {'w','o','r','l','d',' ',' ','\n'},
-    {'i','t','\'','s','a',' ','m','e'},
-    {'m','a','r','i','o','.',' ','\n'},
-    {'c','h','r','i','s',' ',' ','\n'},
-    {'c','h','e','s','s',' ',' ',' '},
-    {'p','r','a','t','t',' ',' ','\n'},
-    {'d','i','s','n','e','y','w','o'},
+    {'s','e','n','t',' ',' ',' ','1'},
+    {'s','e','n','t',' ',' ',' ','2'},
+    {'s','e','n','t',' ',' ',' ','3'},
+    {'s','e','n','t',' ',' ',' ','4'},
+    {'s','e','n','t',' ',' ',' ','5'},
+    {'s','e','n','t',' ',' ',' ','6'},
+    {'s','e','n','t',' ',' ',' ','7'},
+    {'s','e','n','t',' ',' ',' ','8'},
     };
 char j = 0; //Network Buffer mod 8
 unsigned int server_socket;
 unsigned int client_socket;
 bool network_layer_enabled = true;
 bool time_out_f = false;
+thread timerThreads[MAX_SEQ+1];
+bool stop_thread[MAX_SEQ+1]={false};
 // Functions
+void setTimer(bool *time_out,int interval,seq_nr thread_num) {
+    if(stop_thread[thread_num]) return;
+    this_thread::sleep_for(chrono::milliseconds(interval));
+    if(stop_thread[thread_num]) return;
+    *time_out = true;
+}
 void from_network_layer(packet *p)
 {    
     for (char i = 0; i < 8; i++)
@@ -49,11 +60,13 @@ void from_network_layer(packet *p)
 static void send_data(seq_nr frame_nr, packet buffer[])
 {
     /*Construct and send a data frame. */
+    
     frame s;                                            /* scratch variable */
     s.info = buffer[frame_nr];                          /* insert packet into frame */
     s.seq = frame_nr;                                   /* insert sequence number into frame */
     to_physical_layer(&s);                              /* transmit the frame */
-    //start_timer(frame_nr);                              /* start the timer running */
+    start_timer(frame_nr);                              /* start the timer running */
+    this_thread::sleep_for(chrono::milliseconds(1000)); //Send one frame per second
 }
 static bool between(seq_nr a, seq_nr b, seq_nr c)
 {
@@ -62,6 +75,15 @@ static bool between(seq_nr a, seq_nr b, seq_nr c)
         return true;
     else
         return false;
+}
+void start_timer(seq_nr frame_nr)
+{   stop_thread[frame_nr] = true;
+    timerThreads[frame_nr] = thread(setTimer,&time_out_f,5000,frame_nr);
+    timerThreads[frame_nr].detach();
+}
+void stop_timer(seq_nr ack_expected  )
+{
+    stop_thread[ack_expected] = true;
 }
 void startServer()
 {
@@ -118,10 +140,10 @@ void wait_for_event(event_type *event)
     {
         *event = network_layer_ready;
     }
-    /*else if (time_out_f)
+    else if (time_out_f)
     {
         *event = timeout;
-    }*/
+    }
     else
     {
         *event = frame_arrival;
@@ -146,12 +168,12 @@ int main()
     seq_nr frame_expected = 0;      /* next frame expected on inbound stream */
     seq_nr nbuffered = 0;           /* number of output buffers currently in use */
     seq_nr ack_expected = 0;        /* oldest frame as yet unacknowledged */
+    seq_nr i;                   /* used to index into the buffer array */
     frame r;
-    int count = 27;
 
     /*   protocol body   */
 
-    while(count)
+    while(true)
     {   
         wait_for_event(&event); // returns whether event is sending or receiving acknowledgment
         switch(event)
@@ -176,12 +198,20 @@ int main()
             {
                 /*Handle piggybacked ack. */
                 nbuffered = nbuffered - 1; /* one frame fewer buffered */
-                //stop_timer(ack_expected);  /* frame arrived intact; stop timer */
+                stop_timer(ack_expected);  /* frame arrived intact; stop timer */
                 inc(ack_expected); /* contract sender's window */
             }
             break;
             case cksum_err:
             break;                             /* just ignore bad frames */
+            case timeout:                          /* trouble; retransmit all outstanding frames */
+            next_frame_to_send = ack_expected; /* start retransmitting here */
+            for (i = 1; i <= nbuffered; i++)
+            {
+                send_data(next_frame_to_send, buffer); /* resend frame */
+                inc(next_frame_to_send);                               /* prepare to send the next one */
+            }
+            break;
 
         }
         //This makes sure to stop sending frames when going past window size(MAX_SEQ)
@@ -190,7 +220,6 @@ int main()
             enable_network_layer();
         else 
             disable_network_layer();
-    count--;
     }
     
 
