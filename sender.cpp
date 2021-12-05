@@ -60,13 +60,13 @@ void from_network_layer(packet *p)
 static void send_data(seq_nr frame_nr, packet buffer[])
 {
     /*Construct and send a data frame. */
-    
+    this_thread::sleep_for(chrono::milliseconds(1000)); //Send one frame per second
     frame s;                                            /* scratch variable */
     s.info = buffer[frame_nr];                          /* insert packet into frame */
     s.seq = frame_nr;                                   /* insert sequence number into frame */
     to_physical_layer(&s);                              /* transmit the frame */
     start_timer(frame_nr);                              /* start the timer running */
-    this_thread::sleep_for(chrono::milliseconds(1000)); //Send one frame per second
+    
 }
 static bool between(seq_nr a, seq_nr b, seq_nr c)
 {
@@ -77,8 +77,8 @@ static bool between(seq_nr a, seq_nr b, seq_nr c)
         return false;
 }
 void start_timer(seq_nr frame_nr)
-{   stop_thread[frame_nr] = true;
-    timerThreads[frame_nr] = thread(setTimer,&time_out_f,5000,frame_nr);
+{   stop_thread[frame_nr] = false;
+    timerThreads[frame_nr] = thread(setTimer,&time_out_f,9000,frame_nr);
     timerThreads[frame_nr].detach();
 }
 void stop_timer(seq_nr ack_expected  )
@@ -116,14 +116,16 @@ void to_physical_layer(frame *s)
     cout<<"-------------------"<<endl;
 }
 void from_physical_layer(frame *r)
-{
-    read(client_socket, r, sizeof(frame));
+{   
+    if(recv(client_socket, r, sizeof(frame),MSG_DONTWAIT) != -1)//Non blocking
+    {
     cout<<"Frame with seq no = "<<r->seq<<" and ack no = "<<r->ack<<" received"<<endl;  
     cout<<"Packet: ";
     for (int i = 0; i < 8; i++)
         cout<< r->info.data[i];
     cout<<endl;
     cout<<"-------------------"<<endl;
+}
 }
 void enable_network_layer()
 {
@@ -178,15 +180,16 @@ int main()
         wait_for_event(&event); // returns whether event is sending or receiving acknowledgment
         switch(event)
         {
-            //event is sending frames
+            //event is: sending frames
             case network_layer_ready:
             from_network_layer(&buffer[next_frame_to_send]);
             nbuffered ++;
             send_data(next_frame_to_send,buffer);
             inc(next_frame_to_send);
             break;
-            //event is receiving acknowledgment
+            //event is: receiving acknowledgment
             case frame_arrival:
+
             from_physical_layer(&r);
             //idk if this is necessary since I'm not interested in seq no only in ack no
             if(r.seq == frame_expected)
@@ -206,11 +209,14 @@ int main()
             break;                             /* just ignore bad frames */
             case timeout:                          /* trouble; retransmit all outstanding frames */
             next_frame_to_send = ack_expected; /* start retransmitting here */
+            cout<<endl;
+            cout<<"--------TIMEOUT---------"<<endl;
             for (i = 1; i <= nbuffered; i++)
             {
                 send_data(next_frame_to_send, buffer); /* resend frame */
                 inc(next_frame_to_send);                               /* prepare to send the next one */
             }
+            time_out_f = false;
             break;
 
         }
