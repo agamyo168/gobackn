@@ -1,0 +1,48 @@
+    seq_nr next_frame_to_send;  /* MAX SEQ > 1; used for outbound stream */
+    seq_nr ack_expected;        /* oldest frame as yet unacknowledged */
+    seq_nr frame_expected;      /* next frame expected on inbound stream */
+    frame r;                    /* scratch variable */
+    packet buffer[MAX_SEQ + 1]; /* buffers for the outbound stream */
+    seq_nr nbuffered;           /* number of output buffers currently in use */
+    seq_nr i;                   /* used to index into the buffer array */
+    event_type event;
+    enable_network_layer(); /* allow network layer ready events */
+    ack_expected = 0;       /* next ack expected inbound */
+    next_frame_to_send = 0; /* next frame going out */
+    frame_expected = 0;     /* number of frame expected inbound */
+    nbuffered = 0; 
+
+    while (true)
+    {   wait_for_event(&event);
+        switch(event)
+        {
+        case network_layer_ready: /* the network layer has a packet to send */
+        from_network_layer(&buffer[next_frame_to_send]);  
+        nbuffered = nbuffered + 1;                             /* expand the sender's window */
+        send_data(next_frame_to_send, frame_expected, buffer); /* transmit the frame */
+        inc(next_frame_to_send);                               /* advance sender's upper window edge */
+        break;
+        case frame_arrival:          /* a data or control frame has arrived */
+        from_physical_layer(&r); /* get incoming frame from physical layer */
+        if (r.seq == frame_expected)
+        {
+            /*Frames are accepted only in order. */
+            //to_network_layer(&r.info); /* pass packet to network layer */
+            inc(frame_expected);       /* advance lower edge of receiver's window */
+
+        }
+         while (between(ack_expected, r.ack, next_frame_to_send))
+            {
+                /*Handle piggybacked ack. */
+                nbuffered = nbuffered - 1; /* one frame fewer buffered */
+                //stop_timer(ack_expected);  /* frame arrived intact; stop timer */
+                inc(ack_expected); /* contract sender's window */
+            }
+            break;
+        }
+        if (nbuffered < MAX_SEQ)
+            enable_network_layer();
+        else
+            disable_network_layer();
+       
+    }

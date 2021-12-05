@@ -38,7 +38,6 @@ unsigned int server_socket;
 unsigned int client_socket;
 bool network_layer_enabled = true;
 bool time_out_f = false;
-
 // Functions
 void from_network_layer(packet *p)
 {    
@@ -47,13 +46,12 @@ void from_network_layer(packet *p)
 
     j = (j + 1) % 8;
 }
-static void send_data(seq_nr frame_nr, seq_nr frame_expected, packet buffer[])
+static void send_data(seq_nr frame_nr, packet buffer[])
 {
     /*Construct and send a data frame. */
     frame s;                                            /* scratch variable */
     s.info = buffer[frame_nr];                          /* insert packet into frame */
     s.seq = frame_nr;                                   /* insert sequence number into frame */
-    s.ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1); /* piggyback ack */
     to_physical_layer(&s);                              /* transmit the frame */
     //start_timer(frame_nr);                              /* start the timer running */
 }
@@ -85,47 +83,25 @@ void startServer()
 }
 void to_physical_layer(frame *s)
 {
+    //Assuming sender frame is just seq_no and packet
     write(client_socket, s, sizeof(frame));
-    printf("Frame Sent\n");
-    fflush(stdout);
 
-    printf("seq = %d   ack = %d\n", s->seq, s->ack);
-    fflush(stdout);
-
-    printf("Info is : ");
-    fflush(stdout);
-
+    cout<<"Frame with seq no = "<<s->seq<<" sent"<<endl;  
+    cout<<"Packet: ";
     for (int i = 0; i < 8; i++)
         cout<< s->info.data[i];
-    fflush(stdout);
-
-    printf("\n");
-    fflush(stdout);
-
-    printf("*****************************************\n");
-    fflush(stdout);
+    cout<<endl;
+    cout<<"-------------------"<<endl;
 }
-void from_physical_layer(frame *s)
+void from_physical_layer(frame *r)
 {
-    read(client_socket, s, sizeof(frame));
-    printf("Frame Received\n");
-    fflush(stdout);
-
-    printf("seq = %d   ack = %d\n", s->seq, s->ack);
-    fflush(stdout);
-
-    printf("Info is : ");
-    fflush(stdout);
-
+    read(client_socket, r, sizeof(frame));
+    cout<<"Frame with seq no = "<<r->seq<<" and ack no = "<<r->ack<<" received"<<endl;  
+    cout<<"Packet: ";
     for (int i = 0; i < 8; i++)
-        cout<< s->info.data[i];
-    fflush(stdout);
-
-    printf("\n");
-    fflush(stdout);
-
-    printf("*****************************************\n");
-    fflush(stdout);
+        cout<< r->info.data[i];
+    cout<<endl;
+    cout<<"-------------------"<<endl;
 }
 void enable_network_layer()
 {
@@ -142,10 +118,10 @@ void wait_for_event(event_type *event)
     {
         *event = network_layer_ready;
     }
-    else if (time_out_f)
+    /*else if (time_out_f)
     {
         *event = timeout;
-    }
+    }*/
     else
     {
         *event = frame_arrival;
@@ -154,40 +130,49 @@ void wait_for_event(event_type *event)
 
 int main()
 {   startServer();
-    seq_nr next_frame_to_send;  /* MAX SEQ > 1; used for outbound stream */
-    seq_nr ack_expected;        /* oldest frame as yet unacknowledged */
-    seq_nr frame_expected;      /* next frame expected on inbound stream */
-    frame r;                    /* scratch variable */
-    packet buffer[MAX_SEQ + 1]; /* buffers for the outbound stream */
-    seq_nr nbuffered;           /* number of output buffers currently in use */
-    seq_nr i;                   /* used to index into the buffer array */
-    event_type event;
-    enable_network_layer(); /* allow network layer ready events */
-    ack_expected = 0;       /* next ack expected inbound */
-    next_frame_to_send = 0; /* next frame going out */
-    frame_expected = 0;     /* number of frame expected inbound */
-    nbuffered = 0; 
+    //Sender has four modes
+    //Getting packet from network then send it to receiver
+    //receiving acknowledgment from receiver
+    //timeout when one ack is missed
+    //checksum error
+    //first implement the first main two modes
+    //network_layer_ready and frame_arrival
+    //time out make network layer = false and time out = true then join main thread;
+    /*   initializaitons   */ 
 
-    while (true)
-    {   wait_for_event(&event);
+    event_type event;
+    packet buffer[MAX_SEQ+1]; //Buffer for packets that are sent and can be resent again if timeout (Why SEQ+1?)
+    seq_nr next_frame_to_send = 0;  /* MAX SEQ > 1; used for outbound stream */
+    seq_nr frame_expected = 0;      /* next frame expected on inbound stream */
+    seq_nr nbuffered = 0;           /* number of output buffers currently in use */
+    seq_nr ack_expected = 0;        /* oldest frame as yet unacknowledged */
+    frame r;
+    int count = 27;
+
+    /*   protocol body   */
+
+    while(count)
+    {   
+        wait_for_event(&event); // returns whether event is sending or receiving acknowledgment
         switch(event)
         {
-        case network_layer_ready: /* the network layer has a packet to send */
-        from_network_layer(&buffer[next_frame_to_send]);  
-        nbuffered = nbuffered + 1;                             /* expand the sender's window */
-        send_data(next_frame_to_send, frame_expected, buffer); /* transmit the frame */
-        inc(next_frame_to_send);                               /* advance sender's upper window edge */
-        break;
-        case frame_arrival:          /* a data or control frame has arrived */
-        from_physical_layer(&r); /* get incoming frame from physical layer */
-        if (r.seq == frame_expected)
-        {
-            /*Frames are accepted only in order. */
-            //to_network_layer(&r.info); /* pass packet to network layer */
-            inc(frame_expected);       /* advance lower edge of receiver's window */
-
-        }
-         while (between(ack_expected, r.ack, next_frame_to_send))
+            //event is sending frames
+            case network_layer_ready:
+            from_network_layer(&buffer[next_frame_to_send]);
+            nbuffered ++;
+            send_data(next_frame_to_send,buffer);
+            inc(next_frame_to_send);
+            break;
+            //event is receiving acknowledgment
+            case frame_arrival:
+            from_physical_layer(&r);
+            //idk if this is necessary since I'm not interested in seq no only in ack no
+            if(r.seq == frame_expected)
+            {
+            //to_network_layer(&r.info); /* pass packet to network layer */ not really need to
+            inc(frame_expected);       // /* advance lower edge of receiver's window */ idk what this means
+            }
+            while (between(ack_expected, r.ack, next_frame_to_send))
             {
                 /*Handle piggybacked ack. */
                 nbuffered = nbuffered - 1; /* one frame fewer buffered */
@@ -195,18 +180,19 @@ int main()
                 inc(ack_expected); /* contract sender's window */
             }
             break;
+            case cksum_err:
+            break;                             /* just ignore bad frames */
+
         }
-        if (nbuffered < MAX_SEQ)
+        //This makes sure to stop sending frames when going past window size(MAX_SEQ)
+        //Sender becomes listener and waits for acks, if they don't come before time_out the sender resends them
+        if(nbuffered < MAX_SEQ)
             enable_network_layer();
-        else
+        else 
             disable_network_layer();
-       
+    count--;
     }
-
-
     
-    
-   
 
     return 0;
 }
